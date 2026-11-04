@@ -45,12 +45,17 @@ func main() {
 
 	app := NewApp(cfg, embeddedProclaimIcon)
 
+	// Automatically keep ~/.local/bin/keryx and .desktop menu shortcuts in sync whenever keryx runs on Linux
+	if runtime.GOOS == "linux" && len(flag.Args()) <= 1 {
+		_, _ = desktop.InstallShortcuts(cfg, embeddedProclaimIcon, nil)
+	}
+
 	args := flag.Args()
 	if len(args) > 0 {
 		cmd := strings.ToLower(args[0])
 
 		// Direct OAuth URI handling if passed as first arg (e.g. `keryx proclaim://...`)
-		if strings.HasPrefix(cmd, "proclaim:") || strings.HasPrefix(cmd, "libronixdls:") {
+		if strings.HasPrefix(cmd, "proclaim:") || strings.HasPrefix(cmd, "proclaim-auth:") || strings.HasPrefix(cmd, "libronixdls:") {
 			if err := app.LaunchAndWait(args[0]); err != nil {
 				log.Fatalf("Failed to launch Proclaim with OAuth URI: %v", err)
 			}
@@ -332,11 +337,11 @@ func startDesktopUIServer(ctx context.Context, app *App, preferredPort int) (str
 func launchNativeAppWindow(url string) {
 	switch runtime.GOOS {
 	case "linux":
+		// Note: Do not include 'chromium' or 'chromium-browser' here because on Ubuntu/Kubuntu
+		// /usr/bin/chromium-browser is a transitional wrapper script that exits with code 1 if the snap is not installed.
 		browsers := []string{
-			"chromium",
-			"chromium-browser",
-			"google-chrome",
 			"google-chrome-stable",
+			"google-chrome",
 			"brave-browser",
 			"microsoft-edge",
 			"vivaldi",
@@ -345,6 +350,10 @@ func launchNativeAppWindow(url string) {
 			if p, err := exec.LookPath(b); err == nil {
 				cmd := exec.Command(p, "--app="+url, "--window-size=1020,720")
 				if err := cmd.Start(); err == nil {
+					go func(c *exec.Cmd) {
+						done := make(chan error, 1)
+						done <- c.Wait()
+					}(cmd)
 					return
 				}
 			}

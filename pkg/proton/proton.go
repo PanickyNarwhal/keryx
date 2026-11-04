@@ -736,6 +736,13 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 "SuppressStartOnInstall"=dword:00000000
 "LSPExclusions"=dword:00000001
 
+[HKEY_CURRENT_USER\Software\Classes\proclaim]
+@="URL:Proclaim Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\proclaim\shell\open\command]
+@="\"C:\\users\\steamuser\\AppData\\Local\\Proclaim\\System\\Proclaim.exe\" \"%%1\""
+
 [HKEY_CURRENT_USER\Control Panel\Desktop]
 "FontSmoothing"="2"
 "FontSmoothingType"=dword:00000002
@@ -1006,16 +1013,19 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 		return nil, fmt.Errorf("Proclaim.exe not found in prefix %s; please install Proclaim first", cfg.PrefixDir)
 	}
 
-	// Self-heal ICU data files, core fonts, Direct3D DLLs, registry, and synchronous NLog before launching
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	ensureCoreFonts(cfg, runner, logf)
-	configureDirect3D(cfg, runner, logf)
-	_ = applyPrefixRegistry(ctx, cfg, runner, nil)
-	if err := ensureICUFiles(ctx, cfg, runner, logf); err != nil && logf != nil {
-		logf("Warning: ICU verification before launch returned: %v", err)
+	alreadyRunning := IsProclaimRunning() || len(extraArgs) > 0
+	if !alreadyRunning {
+		// Self-heal ICU data files, core fonts, Direct3D DLLs, registry, and synchronous NLog before primary launch
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		ensureCoreFonts(cfg, runner, logf)
+		configureDirect3D(cfg, runner, logf)
+		_ = applyPrefixRegistry(ctx, cfg, runner, nil)
+		if err := ensureICUFiles(ctx, cfg, runner, logf); err != nil && logf != nil {
+			logf("Warning: ICU verification before launch returned: %v", err)
+		}
+		ensureSynchronousNLog(filepath.Dir(exePath))
 	}
-	ensureSynchronousNLog(filepath.Dir(exePath))
 
 	args := append([]string{exePath}, extraArgs...)
 	if logf != nil {
@@ -1027,7 +1037,11 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 	cmd.Env = BuildEnv(cfg, runner)
 
 	logFilePath := filepath.Join(cfg.LogsDir, "proclaim-runtime.log")
-	lf, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	openFlags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	if alreadyRunning {
+		openFlags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	}
+	lf, err := os.OpenFile(logFilePath, openFlags, 0644)
 	if err == nil {
 		cmd.Stdout = lf
 		cmd.Stderr = lf
@@ -1050,11 +1064,19 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 // WaitForProclaim waits for both Proclaim.exe and the wineserver session,
 // streaming proclaim-runtime.log and dumping any Proclaim.log / ProclaimError.log / ProclaimCrash.txt if it exits.
 func WaitForProclaim(cfg *config.Manager, cmd *exec.Cmd, logf func(string, ...any)) error {
+	isSecondaryHandoff := len(cmd.Args) > 2
 	logFilePath := filepath.Join(cfg.LogsDir, "proclaim-runtime.log")
 	stopTail := make(chan struct{})
 
+	var initialOffset int64
+	if isSecondaryHandoff {
+		if st, err := os.Stat(logFilePath); err == nil {
+			initialOffset = st.Size()
+		}
+	}
+
 	go func() {
-		var offset int64
+		offset := initialOffset
 		for {
 			select {
 			case <-stopTail:
@@ -1079,17 +1101,21 @@ func WaitForProclaim(cfg *config.Manager, cmd *exec.Cmd, logf func(string, ...an
 
 	_ = cmd.Wait()
 
-	runner := GetActiveRunner(cfg)
-	if runner != nil && runner.WineServer != "" {
-		wsCmd := exec.Command(runner.WineServer, "-w")
-		wsCmd.Env = BuildEnv(cfg, runner)
-		_ = wsCmd.Run()
+	if !isSecondaryHandoff {
+		runner := GetActiveRunner(cfg)
+		if runner != nil && runner.WineServer != "" {
+			wsCmd := exec.Command(runner.WineServer, "-w")
+			wsCmd.Env = BuildEnv(cfg, runner)
+			_ = wsCmd.Run()
+		}
 	}
 
 	time.Sleep(400 * time.Millisecond)
 	close(stopTail)
 
-	DumpProclaimLogs(cfg, logf)
+	if !isSecondaryHandoff {
+		DumpProclaimLogs(cfg, logf)
+	}
 	return nil
 }
 

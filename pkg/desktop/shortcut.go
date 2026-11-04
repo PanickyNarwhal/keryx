@@ -107,7 +107,7 @@ Type=Application
 Icon=%s
 StartupWMClass=Proclaim.exe
 Categories=AudioVideo;Presentation;
-MimeType=x-scheme-handler/proclaim;x-scheme-handler/libronixdls;
+MimeType=x-scheme-handler/proclaim;x-scheme-handler/proclaim-auth;x-scheme-handler/libronixdls;
 `, targetBin, iconPath)
 
 	if err := os.WriteFile(proclaimDesktopPath, []byte(proclaimDesktopContent), 0755); err != nil {
@@ -133,6 +133,7 @@ Categories=Utility;AudioVideo;
 	// 5. Register x-scheme-handler/proclaim with xdg-mime and update desktop database on Linux
 	if runtime.GOOS == "linux" {
 		_ = exec.Command("xdg-mime", "default", "Faithlife-Proclaim.desktop", "x-scheme-handler/proclaim").Run()
+		_ = exec.Command("xdg-mime", "default", "Faithlife-Proclaim.desktop", "x-scheme-handler/proclaim-auth").Run()
 		_ = exec.Command("xdg-mime", "default", "Faithlife-Proclaim.desktop", "x-scheme-handler/libronixdls").Run()
 		_ = exec.Command("update-desktop-database", appsDir).Run()
 		if logf != nil {
