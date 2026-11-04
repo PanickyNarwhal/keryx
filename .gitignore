@@ -1,0 +1,12 @@
+*.pyc
+__pycache__/
+dist/
+build/
+env/
+.env/
+venv/
+.venv/
+.idea/
+*.egg-info
+.vscode
+/.flatpak-builder
