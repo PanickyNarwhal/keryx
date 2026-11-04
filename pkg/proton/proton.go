@@ -215,7 +215,8 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 
 	envMap["WINEPREFIX"] = cfg.PrefixDir
 	envMap["WINEARCH"] = "win64"
-	envMap["WINEDEBUG"] = "err+all"
+	envMap["WINEDEBUG"] = "fixme-all,err+all"
+	envMap["DOTNET_CLI_UI_LANGUAGE"] = "en-US"
 
 	if runner != nil {
 		envMap["WINE"] = runner.Wine64Path
@@ -225,8 +226,8 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 		}
 	}
 
-	// Disable winemenubuilder and Wine-Mono prompt (Proclaim bundles self-contained .NET 10)
-	dllOverrides := "winemenubuilder.exe=d;mscoree="
+	// Force native Windows ICU DLLs (from icu-win.tar.gz), disable winemenubuilder, and disable Wine-Mono prompt
+	dllOverrides := "icu,icuin,icuuc=n,b;winemenubuilder.exe=d;mscoree="
 	if settings.EnableDXVK && runner != nil && (runner.Type == "proton-ge" || runner.Type == "steam-proton") {
 		dllOverrides = "d3d11,dxgi,d3d9,d3d10core=n,b;" + dllOverrides
 	}
@@ -396,11 +397,23 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts]
 "Arial (TrueType)"="arial.ttf"
 
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client]
+"Enabled"=dword:00000001
+"DisabledByDefault"=dword:00000000
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client]
+"Enabled"=dword:00000001
+"DisabledByDefault"=dword:00000000
+
 [HKEY_CURRENT_USER\Software\Wine\DllOverrides]
+"icu"="native,builtin"
+"icuin"="native,builtin"
+"icuuc"="native,builtin"
 "winemenubuilder.exe"=""
 
 [HKEY_CURRENT_USER\Software\Proclaim]
 "SuppressStartOnInstall"=dword:00000000
+"LSPExclusions"=dword:00000001
 
 [HKEY_CURRENT_USER\Control Panel\Desktop]
 "FontSmoothing"="2"
@@ -435,9 +448,9 @@ func ensureICUFiles(ctx context.Context, cfg *config.Manager, runner *Runner, lo
 		}
 	}
 
-	// Check if globalization/ICU/icudtl.dat AND genuine icuuc.dll (>1MB) are already in place
+	// Check if globalization/ICU/icudtl.dat AND genuine native icu.dll (5.3MB in icu-win.tar.gz) are already in place
 	if st1, err1 := os.Stat(filepath.Join(globLower, "icudtl.dat")); err1 == nil && st1.Size() > 100000 {
-		if st2, err2 := os.Stat(filepath.Join(sys32, "icuuc.dll")); err2 == nil && st2.Size() > 1000000 {
+		if st2, err2 := os.Stat(filepath.Join(sys32, "icu.dll")); err2 == nil && st2.Size() > 4000000 {
 			return nil
 		}
 	}
@@ -532,7 +545,22 @@ func InstallProclaimMSI(ctx context.Context, cfg *config.Manager, runner *Runner
 	return nil
 }
 
-// FindProclaimExe searches the Wine prefix for Proclaim.exe.
+// promotePendingDir promotes AppData\Local\Proclaim\Pending -> AppData\Local\Proclaim\System if Pending exists.
+// On Windows, the native Proclaim.SplashScreen wrapper performs this rename and then runs UAC "runas"
+// ("/lsp" and "/tls12"). Promoting Pending -> System directly in Keryx lets us launch the real .NET 10
+// System\Proclaim.exe binary directly, completely bypassing the UAC elevation prompt in Wine.
+func promotePendingDir(proclaimRoot string) {
+	pendingDir := filepath.Join(proclaimRoot, "Pending")
+	pendingExe := filepath.Join(pendingDir, "Proclaim.exe")
+	if _, err := os.Stat(pendingExe); err != nil {
+		return
+	}
+	systemDir := filepath.Join(proclaimRoot, "System")
+	_ = os.RemoveAll(systemDir)
+	_ = os.Rename(pendingDir, systemDir)
+}
+
+// FindProclaimExe searches the Wine prefix for the actual .NET 10 System\Proclaim.exe (promoting Pending -> System if needed).
 func FindProclaimExe(cfg *config.Manager) string {
 	usersDir := filepath.Join(cfg.PrefixDir, "drive_c", "users")
 	entries, err := os.ReadDir(usersDir)
@@ -543,9 +571,18 @@ func FindProclaimExe(cfg *config.Manager) string {
 		if !e.IsDir() || e.Name() == "Public" {
 			continue
 		}
-		candidate := filepath.Join(usersDir, e.Name(), "AppData", "Local", "Proclaim", "Proclaim.exe")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+		proclaimRoot := filepath.Join(usersDir, e.Name(), "AppData", "Local", "Proclaim")
+		promotePendingDir(proclaimRoot)
+
+		// Prefer launching System\Proclaim.exe directly to bypass Proclaim.SplashScreen's UAC ("runas" /lsp /tls12)
+		systemExe := filepath.Join(proclaimRoot, "System", "Proclaim.exe")
+		if _, err := os.Stat(systemExe); err == nil {
+			return systemExe
+		}
+
+		stubExe := filepath.Join(proclaimRoot, "Proclaim.exe")
+		if _, err := os.Stat(stubExe); err == nil {
+			return stubExe
 		}
 	}
 	return ""
@@ -557,9 +594,13 @@ func GetInstalledVersion(cfg *config.Manager) string {
 	if exePath == "" {
 		return ""
 	}
-	proclaimDir := filepath.Dir(exePath)
-	for _, sub := range []string{"System", "Pending"} {
-		depsPath := filepath.Join(proclaimDir, sub, "Proclaim.deps.json")
+	exeDir := filepath.Dir(exePath)
+	candidates := []string{
+		filepath.Join(exeDir, "Proclaim.deps.json"),
+		filepath.Join(exeDir, "System", "Proclaim.deps.json"),
+		filepath.Join(exeDir, "Pending", "Proclaim.deps.json"),
+	}
+	for _, depsPath := range candidates {
 		if data, err := os.ReadFile(depsPath); err == nil {
 			if m := reDepsVersion.FindSubmatch(data); len(m) >= 2 {
 				return string(m[1])
@@ -572,6 +613,42 @@ func GetInstalledVersion(cfg *config.Manager) string {
 	return "Installed"
 }
 
+// ensureSynchronousNLog rewrites System\NLog.config to remove AsyncWrapper and enable autoFlush="true"
+// plus console output, so any startup error or stack trace is immediately flushed to Proclaim.log and stdout.
+func ensureSynchronousNLog(systemDir string) {
+	nlogPath := filepath.Join(systemDir, "NLog.config")
+	if _, err := os.Stat(nlogPath); err != nil {
+		return
+	}
+	syncConfig := `<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <targets>
+    <target name="file"
+            xsi:type="File"
+            fileName="${specialfolder:folder=LocalApplicationData:dir=Faithlife\Logs\Proclaim}\Proclaim.log"
+            layout="${longdate} ${pad:padding=5:inner=${threadid}} ${pad:padding=-5:inner=${level:uppercase=true}} ${logger:shortName=true} ${message}${onexception:${newline}${exception:format=ToString,Data}}"
+            keepFileOpen="true"
+            openFileCacheTimeout="30"
+            autoFlush="true"
+            ConcurrentWrites="false"
+            deleteOldFileOnStartup="true"
+            encoding="utf-8" />
+    <target name="console"
+            xsi:type="Console"
+            layout="${longdate} ${pad:padding=5:inner=${threadid}} ${pad:padding=-5:inner=${level:uppercase=true}} ${logger:shortName=true} ${message}${onexception:${newline}${exception:format=ToString,Data}}" />
+    <target name="debugger"
+            xsi:type="Debugger"
+            layout="${longdate}|${pad:padding=5:inner=${threadid}}|${pad:padding=-5:inner=${level:uppercase=true}}|${logger:shortName=true}|${message}${onexception:${newline}${exception:format=ToString,Data}}" />
+  </targets>
+  <rules>
+    <logger name="*" minlevel="Info" writeTo="file,console,debugger" />
+  </rules>
+</nlog>
+`
+	_ = os.WriteFile(nlogPath, []byte(syncConfig), 0644)
+}
+
 // IsProclaimRunning checks if Proclaim.exe is currently running.
 func IsProclaimRunning() bool {
 	if runtime.GOOS != "linux" {
@@ -581,10 +658,7 @@ func IsProclaimRunning() bool {
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
-// LaunchProclaim launches Proclaim.exe inside the configured Proton-GE prefix.
-// IMPORTANT: Uses a real on-disk log file for stdout/stderr rather than an io.Pipe so that when the
-// stub launcher (AppData\Local\Proclaim\Proclaim.exe) spawns System\Proclaim.exe and exits,
-// the child process never receives SIGPIPE!
+// LaunchProclaim launches System\Proclaim.exe inside the configured Proton-GE prefix.
 func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, ...any)) (*exec.Cmd, error) {
 	runner := GetActiveRunner(cfg)
 	if runner == nil {
@@ -595,7 +669,7 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 		return nil, fmt.Errorf("Proclaim.exe not found in prefix %s; please install Proclaim first", cfg.PrefixDir)
 	}
 
-	// Self-heal ICU data files, core fonts, Direct3D DLLs, and registry before launching
+	// Self-heal ICU data files, core fonts, Direct3D DLLs, registry, and synchronous NLog before launching
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	ensureCoreFonts(cfg, logf)
@@ -604,6 +678,7 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 	if err := ensureICUFiles(ctx, cfg, runner, logf); err != nil && logf != nil {
 		logf("Warning: ICU verification before launch returned: %v", err)
 	}
+	ensureSynchronousNLog(filepath.Dir(exePath))
 
 	args := append([]string{exePath}, extraArgs...)
 	if logf != nil {
@@ -635,8 +710,8 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 	return cmd, nil
 }
 
-// WaitForProclaim waits for both the initial Proclaim.exe stub and the wineserver session (System\Proclaim.exe),
-// streaming proclaim-runtime.log and dumping any ProclaimError.log / ProclaimCrash.txt if it exits.
+// WaitForProclaim waits for both Proclaim.exe and the wineserver session,
+// streaming proclaim-runtime.log and dumping any Proclaim.log / ProclaimError.log / ProclaimCrash.txt if it exits.
 func WaitForProclaim(cfg *config.Manager, cmd *exec.Cmd, logf func(string, ...any)) error {
 	logFilePath := filepath.Join(cfg.LogsDir, "proclaim-runtime.log")
 	stopTail := make(chan struct{})
@@ -667,8 +742,6 @@ func WaitForProclaim(cfg *config.Manager, cmd *exec.Cmd, logf func(string, ...an
 
 	_ = cmd.Wait()
 
-	// Remember: AppData\Local\Proclaim\Proclaim.exe is a stub that spawns System\Proclaim.exe and exits!
-	// So we wait on wineserver -w so we stay attached while System\Proclaim.exe is running.
 	runner := GetActiveRunner(cfg)
 	if runner != nil && runner.WineServer != "" {
 		wsCmd := exec.Command(runner.WineServer, "-w")
@@ -698,8 +771,9 @@ func DumpProclaimLogs(cfg *config.Manager, logf func(string, ...any)) {
 			continue
 		}
 		logDirs := []string{
-			filepath.Join(usersDir, e.Name(), "Documents", "Proclaim Log Files"),
 			filepath.Join(usersDir, e.Name(), "AppData", "Local", "Faithlife", "Logs", "Proclaim"),
+			filepath.Join(usersDir, e.Name(), "Documents", "Proclaim Log Files"),
+			filepath.Join(usersDir, e.Name(), "Documents", "Logos Log Files"),
 		}
 		for _, dir := range logDirs {
 			files, err := os.ReadDir(dir)
@@ -717,8 +791,8 @@ func DumpProclaimLogs(cfg *config.Manager, logf func(string, ...any)) {
 				}
 				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 				start := 0
-				if len(lines) > 35 {
-					start = len(lines) - 35
+				if len(lines) > 45 {
+					start = len(lines) - 45
 				}
 				logf("--- %s (last %d lines) ---", f.Name(), len(lines)-start)
 				for _, l := range lines[start:] {

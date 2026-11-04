@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -61,5 +63,31 @@ func TestBuildEnvIncludesProtonAndDXVK(t *testing.T) {
 	}
 	if !strings.Contains(envJoined, "GST_PLUGIN_SYSTEM_PATH_1_0=") {
 		t.Errorf("expected GST_PLUGIN_SYSTEM_PATH_1_0 in env")
+	}
+	if !strings.Contains(envJoined, "icu,icuin,icuuc=n,b") {
+		t.Errorf("expected icu,icuin,icuuc=n,b in WINEDLLOVERRIDES, got:\n%s", envJoined)
+	}
+}
+
+func TestPromotePendingAndBypassSplashStub(t *testing.T) {
+	t.Setenv("KERYX_HOME", t.TempDir())
+	cfg, err := config.NewManager()
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	proclaimRoot := filepath.Join(cfg.PrefixDir, "drive_c", "users", "steamuser", "AppData", "Local", "Proclaim")
+	pendingDir := filepath.Join(proclaimRoot, "Pending")
+	if err := os.MkdirAll(pendingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create both the splash stub and Pending/Proclaim.exe
+	_ = os.WriteFile(filepath.Join(proclaimRoot, "Proclaim.exe"), []byte("splash"), 0755)
+	_ = os.WriteFile(filepath.Join(pendingDir, "Proclaim.exe"), []byte("dotnet10-apphost"), 0755)
+
+	exe := proton.FindProclaimExe(cfg)
+	expected := filepath.Join(proclaimRoot, "System", "Proclaim.exe")
+	if exe != expected {
+		t.Fatalf("expected FindProclaimExe to promote Pending->System and return %s, got %s", expected, exe)
 	}
 }
