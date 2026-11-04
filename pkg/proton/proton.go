@@ -2,8 +2,10 @@ package proton
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"keryx/pkg/config"
 	"keryx/pkg/installer"
@@ -263,6 +266,18 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 		}
 		envMap["GST_PLUGIN_SYSTEM_PATH_1_0"] = strings.Join(gstPaths, string(os.PathListSeparator))
 
+		wineDllPaths := []string{
+			filepath.Join(lib64, "wine", "vkd3d-proton", "x86_64-windows"),
+			filepath.Join(lib64, "wine", "x86_64-windows"),
+			filepath.Join(lib64, "wine", "x86_64-unix"),
+			filepath.Join(lib64, "wine"),
+			filepath.Join(lib32, "wine", "vkd3d-proton", "i386-windows"),
+			filepath.Join(lib32, "wine", "i386-windows"),
+			filepath.Join(lib32, "wine", "i386-unix"),
+			filepath.Join(lib32, "wine"),
+		}
+		envMap["WINEDLLPATH"] = strings.Join(wineDllPaths, string(os.PathListSeparator))
+
 		// Standalone Proton compatibility variables so Steam is never required
 		steamDummyDir := filepath.Join(cfg.DataDir, "steam_client")
 		_ = os.MkdirAll(steamDummyDir, 0755)
@@ -300,8 +315,8 @@ func ProvisionPrefix(ctx context.Context, cfg *config.Manager, runner *Runner, l
 		}
 	}
 
-	// 1. Ensure core fonts (Arial) exist in drive_c/windows/Fonts so WPF (.NET 10) doesn't crash on startup
-	ensureCoreFonts(cfg, logf)
+	// 1. Ensure core Windows & WPF fonts exist in drive_c/windows/Fonts with genuine OpenType family names
+	ensureCoreFonts(cfg, runner, logf)
 
 	// 2. Apply Windows 10 Build 19045 + Proclaim + Font registry settings
 	if logf != nil {
@@ -325,17 +340,90 @@ func ProvisionPrefix(ctx context.Context, cfg *config.Manager, runner *Runner, l
 	return nil
 }
 
-// ensureCoreFonts ensures arial.ttf is present in drive_c/windows/Fonts so .NET WPF text rendering works out of the box.
-func ensureCoreFonts(cfg *config.Manager, logf func(string, ...any)) {
+type wpfFontSpec struct {
+	FileName  string
+	Family    string
+	Subfamily string
+}
+
+var coreWPFFonts = []wpfFontSpec{
+	{"arial.ttf", "Arial", "Regular"},
+	{"arialbd.ttf", "Arial", "Bold"},
+	{"ariali.ttf", "Arial", "Italic"},
+	{"arialbi.ttf", "Arial", "Bold Italic"},
+	{"segoeui.ttf", "Segoe UI", "Regular"},
+	{"segoeuib.ttf", "Segoe UI", "Bold"},
+	{"segoeuii.ttf", "Segoe UI", "Italic"},
+	{"segoeuiz.ttf", "Segoe UI", "Bold Italic"},
+	{"seguisym.ttf", "Segoe UI Symbol", "Regular"},
+	{"tahoma.ttf", "Tahoma", "Regular"},
+	{"tahomabd.ttf", "Tahoma", "Bold"},
+	{"micross.ttf", "Microsoft Sans Serif", "Regular"},
+	{"times.ttf", "Times New Roman", "Regular"},
+	{"timesbd.ttf", "Times New Roman", "Bold"},
+	{"cour.ttf", "Courier New", "Regular"},
+	{"courbd.ttf", "Courier New", "Bold"},
+	{"verdana.ttf", "Verdana", "Regular"},
+	{"verdanab.ttf", "Verdana", "Bold"},
+	{"trebuc.ttf", "Trebuchet MS", "Regular"},
+	{"georgia.ttf", "Georgia", "Regular"},
+	{"l_10646.ttf", "Lucida Sans Unicode", "Regular"},
+	{"lucon.ttf", "Lucida Console", "Regular"},
+	{"msyh.ttf", "Microsoft YaHei", "Regular"},
+	{"msgothic.ttf", "MS Gothic", "Regular"},
+	{"simsun.ttf", "SimSun", "Regular"},
+	{"gulim.ttf", "Gulim", "Regular"},
+	{"sylfaen.ttf", "Sylfaen", "Regular"},
+	{"marlett.ttf", "Marlett", "Regular"},
+	{"symbol.ttf", "Symbol", "Regular"},
+	{"wingding.ttf", "Wingdings", "Regular"},
+	{"webdings.ttf", "Webdings", "Regular"},
+}
+
+// ensureCoreFonts populates drive_c/windows/Fonts from Proton/Wine's share/wine/fonts directory
+// and guarantees every core Windows/WPF font family has its exact OpenType name table entry
+// so WPF's MS.Internal.Shaping.TypefaceMap.MapUnresolvedCharacters never triggers FailFast.
+func ensureCoreFonts(cfg *config.Manager, runner *Runner, logf func(string, ...any)) {
 	fontsDir := filepath.Join(cfg.PrefixDir, "drive_c", "windows", "Fonts")
 	_ = os.MkdirAll(fontsDir, 0755)
+	_ = os.Remove(filepath.Join(fontsDir, "Arial.ttf"))
 
-	arialDest := filepath.Join(fontsDir, "arial.ttf")
-	if _, err := os.Stat(arialDest); err == nil {
-		return
+	// 1. Copy all fonts shipped with Proton/Wine (<runner>/files/share/wine/fonts) into drive_c/windows/Fonts
+	var wineFontDirs []string
+	if runner != nil {
+		filesDir := filepath.Dir(filepath.Dir(runner.Wine64Path))
+		wineFontDirs = append(wineFontDirs,
+			filepath.Join(filesDir, "share", "wine", "fonts"),
+			filepath.Join(runner.RootDir, "files", "share", "wine", "fonts"),
+			filepath.Join(runner.RootDir, "dist", "share", "wine", "fonts"),
+		)
+	}
+	wineFontDirs = append(wineFontDirs, "/usr/share/wine/fonts", "/usr/local/share/wine/fonts")
+
+	for _, wfd := range wineFontDirs {
+		entries, err := os.ReadDir(wfd)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(e.Name()))
+			if ext == ".ttf" || ext == ".ttc" || ext == ".otf" || ext == ".fon" {
+				dst := filepath.Join(fontsDir, e.Name())
+				if _, err := os.Stat(dst); err != nil {
+					_ = copyFile(filepath.Join(wfd, e.Name()), dst, 0644)
+				}
+			}
+		}
 	}
 
-	candidates := []string{
+	// 2. Find a base TrueType (.ttf) font to synthesize any missing or misnamed WPF fallback fonts
+	var baseTTF []byte
+	baseCandidates := []string{
+		filepath.Join(fontsDir, "tahoma.ttf"),
+		filepath.Join(fontsDir, "arial.ttf"),
 		"/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
 		"/usr/share/fonts/truetype/msttcorefonts/arial.ttf",
 		"/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -344,17 +432,217 @@ func ensureCoreFonts(cfg *config.Manager, logf func(string, ...any)) {
 		"/usr/share/fonts/noto/NotoSans-Regular.ttf",
 		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 	}
-
-	for _, src := range candidates {
-		if _, err := os.Stat(src); err == nil {
-			_ = copyFile(src, arialDest, 0644)
-			_ = copyFile(src, filepath.Join(fontsDir, "Arial.ttf"), 0644)
-			if logf != nil {
-				logf("Installed fallback Arial TrueType font from %s", src)
-			}
-			return
+	for _, c := range baseCandidates {
+		if data, err := os.ReadFile(c); err == nil && len(data) > 1024 && bytes.Equal(data[0:4], []byte{0, 1, 0, 0}) {
+			baseTTF = data
+			break
 		}
 	}
+	if len(baseTTF) == 0 {
+		_ = filepath.WalkDir("/usr/share/fonts", func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if strings.EqualFold(filepath.Ext(d.Name()), ".ttf") {
+				if data, err := os.ReadFile(path); err == nil && len(data) > 1024 && bytes.Equal(data[0:4], []byte{0, 1, 0, 0}) {
+					baseTTF = data
+					return io.EOF
+				}
+			}
+			return nil
+		})
+	}
+	if len(baseTTF) == 0 {
+		return
+	}
+
+	synthesizedCount := 0
+	for _, spec := range coreWPFFonts {
+		dst := filepath.Join(fontsDir, spec.FileName)
+		if existing, err := os.ReadFile(dst); err == nil && TTFHasFamilyName(existing, spec.Family) {
+			continue
+		}
+		patched, err := BuildTTFWithFamilyName(baseTTF, spec.Family, spec.Subfamily)
+		if err == nil {
+			_ = os.WriteFile(dst, patched, 0644)
+			synthesizedCount++
+		}
+	}
+	if synthesizedCount > 0 && logf != nil {
+		logf("Provisioned %d core Windows/WPF TrueType font families in %s", synthesizedCount, fontsDir)
+	}
+}
+
+func encodeUTF16BE(s string) []byte {
+	u16 := utf16.Encode([]rune(s))
+	buf := make([]byte, len(u16)*2)
+	for i, v := range u16 {
+		binary.BigEndian.PutUint16(buf[i*2:], v)
+	}
+	return buf
+}
+
+// TTFHasFamilyName inspects the OpenType 'name' table of ttfData and checks if PlatformID=3, NameID=1 matches familyName.
+func TTFHasFamilyName(ttfData []byte, familyName string) bool {
+	if len(ttfData) < 12 {
+		return false
+	}
+	numTables := int(binary.BigEndian.Uint16(ttfData[4:6]))
+	if len(ttfData) < 12+numTables*16 {
+		return false
+	}
+	wantUTF16 := encodeUTF16BE(familyName)
+	for i := 0; i < numTables; i++ {
+		ent := ttfData[12+i*16 : 12+(i+1)*16]
+		if string(ent[0:4]) == "name" {
+			off := int(binary.BigEndian.Uint32(ent[8:12]))
+			length := int(binary.BigEndian.Uint32(ent[12:16]))
+			if off < 0 || length < 6 || off+length > len(ttfData) {
+				return false
+			}
+			nt := ttfData[off : off+length]
+			count := int(binary.BigEndian.Uint16(nt[2:4]))
+			strOff := int(binary.BigEndian.Uint16(nt[4:6]))
+			if 6+count*12 > len(nt) {
+				return false
+			}
+			for j := 0; j < count; j++ {
+				rec := nt[6+j*12 : 6+(j+1)*12]
+				pid := binary.BigEndian.Uint16(rec[0:2])
+				nid := binary.BigEndian.Uint16(rec[6:8])
+				rLen := int(binary.BigEndian.Uint16(rec[8:10]))
+				rOff := int(binary.BigEndian.Uint16(rec[10:12]))
+				if pid == 3 && nid == 1 && strOff+rOff+rLen <= len(nt) {
+					if bytes.Equal(nt[strOff+rOff:strOff+rOff+rLen], wantUTF16) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// BuildTTFWithFamilyName returns a copy of srcTTF with a spec-compliant OpenType 'name' table
+// declaring familyName and subfamilyName for both Macintosh (PlatformID=1) and Windows (PlatformID=3, en-US).
+func BuildTTFWithFamilyName(srcTTF []byte, familyName, subfamilyName string) ([]byte, error) {
+	if len(srcTTF) < 12 {
+		return nil, fmt.Errorf("invalid TTF header")
+	}
+	numTables := int(binary.BigEndian.Uint16(srcTTF[4:6]))
+	if len(srcTTF) < 12+numTables*16 {
+		return nil, fmt.Errorf("truncated TTF directory")
+	}
+
+	nameEntryIdx := -1
+	headOffset := -1
+	for i := 0; i < numTables; i++ {
+		ent := srcTTF[12+i*16 : 12+(i+1)*16]
+		tag := string(ent[0:4])
+		if tag == "name" {
+			nameEntryIdx = i
+		} else if tag == "head" {
+			headOffset = int(binary.BigEndian.Uint32(ent[8:12]))
+		}
+	}
+	if nameEntryIdx < 0 {
+		return nil, fmt.Errorf("no 'name' table in TTF")
+	}
+
+	fullName := familyName
+	if subfamilyName != "" && subfamilyName != "Regular" {
+		fullName = familyName + " " + subfamilyName
+	}
+	psName := strings.ReplaceAll(familyName, " ", "") + "-" + strings.ReplaceAll(subfamilyName, " ", "")
+	uniqueID := fullName + " : Keryx"
+	versionStr := "Version 1.00"
+
+	type namePair struct {
+		nameID uint16
+		val    string
+	}
+	pairs := []namePair{
+		{1, familyName},
+		{2, subfamilyName},
+		{3, uniqueID},
+		{4, fullName},
+		{5, versionStr},
+		{6, psName},
+	}
+
+	type rawRec struct {
+		platformID uint16
+		encodingID uint16
+		languageID uint16
+		nameID     uint16
+		data       []byte
+	}
+	var recs []rawRec
+	for _, p := range pairs {
+		recs = append(recs, rawRec{1, 0, 0, p.nameID, []byte(p.val)})
+	}
+	for _, p := range pairs {
+		recs = append(recs, rawRec{3, 1, 0x0409, p.nameID, encodeUTF16BE(p.val)})
+	}
+
+	strStorageOffset := 6 + len(recs)*12
+	var strBuf bytes.Buffer
+	var nameTable bytes.Buffer
+	_ = binary.Write(&nameTable, binary.BigEndian, uint16(0))
+	_ = binary.Write(&nameTable, binary.BigEndian, uint16(len(recs)))
+	_ = binary.Write(&nameTable, binary.BigEndian, uint16(strStorageOffset))
+
+	for _, r := range recs {
+		_ = binary.Write(&nameTable, binary.BigEndian, r.platformID)
+		_ = binary.Write(&nameTable, binary.BigEndian, r.encodingID)
+		_ = binary.Write(&nameTable, binary.BigEndian, r.languageID)
+		_ = binary.Write(&nameTable, binary.BigEndian, r.nameID)
+		_ = binary.Write(&nameTable, binary.BigEndian, uint16(len(r.data)))
+		_ = binary.Write(&nameTable, binary.BigEndian, uint16(strBuf.Len()))
+		strBuf.Write(r.data)
+	}
+	nameTable.Write(strBuf.Bytes())
+	newNameBytes := nameTable.Bytes()
+
+	out := make([]byte, len(srcTTF))
+	copy(out, srcTTF)
+	for len(out)%4 != 0 {
+		out = append(out, 0)
+	}
+	newNameOffset := uint32(len(out))
+	newNameLen := uint32(len(newNameBytes))
+	newNameChecksum := ttfCalcChecksum(newNameBytes)
+
+	out = append(out, newNameBytes...)
+	for len(out)%4 != 0 {
+		out = append(out, 0)
+	}
+
+	entPos := 12 + nameEntryIdx*16
+	binary.BigEndian.PutUint32(out[entPos+4:entPos+8], newNameChecksum)
+	binary.BigEndian.PutUint32(out[entPos+8:entPos+12], newNameOffset)
+	binary.BigEndian.PutUint32(out[entPos+12:entPos+16], newNameLen)
+
+	if headOffset >= 0 && headOffset+12 <= len(out) {
+		binary.BigEndian.PutUint32(out[headOffset+8:headOffset+12], 0)
+		adj := uint32(0xB1B0AFBA) - ttfCalcChecksum(out)
+		binary.BigEndian.PutUint32(out[headOffset+8:headOffset+12], adj)
+	}
+	return out, nil
+}
+
+func ttfCalcChecksum(data []byte) uint32 {
+	var sum uint32
+	n := len(data) &^ 3
+	for i := 0; i < n; i += 4 {
+		sum += binary.BigEndian.Uint32(data[i : i+4])
+	}
+	if rem := len(data) - n; rem > 0 {
+		var tail [4]byte
+		copy(tail[:], data[n:])
+		sum += binary.BigEndian.Uint32(tail[:])
+	}
+	return sum
 }
 
 func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runner, logf func(string, ...any)) error {
@@ -398,6 +686,36 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts]
 "Arial (TrueType)"="arial.ttf"
+"Arial Bold (TrueType)"="arialbd.ttf"
+"Arial Italic (TrueType)"="ariali.ttf"
+"Arial Bold Italic (TrueType)"="arialbi.ttf"
+"Courier New (TrueType)"="cour.ttf"
+"Courier New Bold (TrueType)"="courbd.ttf"
+"Georgia (TrueType)"="georgia.ttf"
+"Gulim (TrueType)"="gulim.ttf"
+"Lucida Console (TrueType)"="lucon.ttf"
+"Lucida Sans Unicode (TrueType)"="l_10646.ttf"
+"Marlett (TrueType)"="marlett.ttf"
+"Microsoft Sans Serif (TrueType)"="micross.ttf"
+"Microsoft YaHei (TrueType)"="msyh.ttf"
+"MS Gothic (TrueType)"="msgothic.ttf"
+"Segoe UI (TrueType)"="segoeui.ttf"
+"Segoe UI Bold (TrueType)"="segoeuib.ttf"
+"Segoe UI Italic (TrueType)"="segoeuii.ttf"
+"Segoe UI Bold Italic (TrueType)"="segoeuiz.ttf"
+"Segoe UI Symbol (TrueType)"="seguisym.ttf"
+"SimSun (TrueType)"="simsun.ttf"
+"Sylfaen (TrueType)"="sylfaen.ttf"
+"Symbol (TrueType)"="symbol.ttf"
+"Tahoma (TrueType)"="tahoma.ttf"
+"Tahoma Bold (TrueType)"="tahomabd.ttf"
+"Times New Roman (TrueType)"="times.ttf"
+"Times New Roman Bold (TrueType)"="timesbd.ttf"
+"Trebuchet MS (TrueType)"="trebuc.ttf"
+"Verdana (TrueType)"="verdana.ttf"
+"Verdana Bold (TrueType)"="verdanab.ttf"
+"Webdings (TrueType)"="webdings.ttf"
+"Wingdings (TrueType)"="wingding.ttf"
 
 [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client]
 "Enabled"=dword:00000001
@@ -489,6 +807,22 @@ func configureDirect3D(cfg *config.Manager, runner *Runner, logf func(string, ..
 	}
 	filesDir := filepath.Dir(filepath.Dir(runner.Wine64Path))
 	sys32 := filepath.Join(cfg.PrefixDir, "drive_c", "windows", "system32")
+
+	// Ensure libvkd3d-1.dll and libvkd3d-shader-1.dll are present in system32 so wined3d.dll / d3d9.dll never fail to import them
+	vkd3dDirs := []string{
+		filepath.Join(filesDir, "lib64", "wine", "vkd3d-proton", "x86_64-windows"),
+		filepath.Join(filesDir, "lib64", "wine", "vkd3d-proton"),
+		filepath.Join(filesDir, "lib64", "wine", "x86_64-windows"),
+		filepath.Join(filesDir, "bin"),
+	}
+	for _, vdir := range vkd3dDirs {
+		for _, vdll := range []string{"libvkd3d-1.dll", "libvkd3d-shader-1.dll"} {
+			src := filepath.Join(vdir, vdll)
+			if _, err := os.Stat(src); err == nil {
+				_ = copyFile(src, filepath.Join(sys32, vdll), 0755)
+			}
+		}
+	}
 
 	if cfg.GetSettings().EnableDXVK {
 		candidates := []string{
@@ -675,7 +1009,7 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 	// Self-heal ICU data files, core fonts, Direct3D DLLs, registry, and synchronous NLog before launching
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	ensureCoreFonts(cfg, logf)
+	ensureCoreFonts(cfg, runner, logf)
 	configureDirect3D(cfg, runner, logf)
 	_ = applyPrefixRegistry(ctx, cfg, runner, nil)
 	if err := ensureICUFiles(ctx, cfg, runner, logf); err != nil && logf != nil {

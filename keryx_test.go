@@ -94,3 +94,27 @@ func TestPromotePendingAndBypassSplashStub(t *testing.T) {
 		t.Fatalf("expected FindProclaimExe to promote Pending->System and return %s, got %s", expected, exe)
 	}
 }
+
+func TestBuildTTFWithFamilyName(t *testing.T) {
+	// Construct a minimal valid TrueType header with 'head' and 'name' tables
+	src := make([]byte, 12+2*16+64)
+	copy(src[0:4], []byte{0, 1, 0, 0})
+	src[5] = 2 // 2 tables
+	copy(src[12:16], []byte("head"))
+	src[23] = 44 // offset 44
+	src[27] = 36 // length 36
+	copy(src[28:32], []byte("name"))
+	src[39] = 80 // offset 80
+	src[43] = 16 // length 16
+
+	patched, err := proton.BuildTTFWithFamilyName(src, "Segoe UI", "Regular")
+	if err != nil {
+		t.Fatalf("BuildTTFWithFamilyName failed: %v", err)
+	}
+	if !proton.TTFHasFamilyName(patched, "Segoe UI") {
+		t.Fatalf("expected TTFHasFamilyName(patched, 'Segoe UI') to be true")
+	}
+	if proton.TTFHasFamilyName(patched, "Liberation Sans") {
+		t.Fatalf("expected TTFHasFamilyName(patched, 'Liberation Sans') to be false")
+	}
+}
