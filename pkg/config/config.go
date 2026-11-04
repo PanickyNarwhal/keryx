@@ -28,16 +28,16 @@ const (
 )
 
 type Settings struct {
-	RunnerMode         string `json:"runnerMode"`         // "proton-ge", "steam-proton", "system-wine"
-	SelectedRunnerName string `json:"selectedRunnerName"` // e.g., "GE-Proton10-32"
-	SelectedWine64Path string `json:"selectedWine64Path"` // resolved path to wine64/wine
-	EnableDXVK         bool   `json:"enableDxvk"`         // use DXVK Vulkan backend for Direct3D 11
-	EnableEsync        bool   `json:"enableEsync"`        // WINEESYNC=1
-	EnableFsync        bool   `json:"enableFsync"`        // WINEFSYNC=1
-	UseMsiQuietMode    bool   `json:"useMsiQuietMode"`    // false = /qb (basic progress bar), true = /qn
-	VirtualDesktop     string `json:"virtualDesktop"`     // e.g. "" (off) or "1920x1080"
-	InstalledVersion   string `json:"installedVersion"`   // cached installed version
-	LastSetupCompleted bool   `json:"lastSetupCompleted"` // true once walkthrough finishes
+	RunnerMode         string `json:"runnerMode"`          // "proton-ge", "steam-proton", "system-wine"
+	SelectedRunnerName string `json:"selectedRunnerName"`  // e.g., "GE-Proton10-32"
+	SelectedWine64Path string `json:"selectedWine64Path"`  // resolved path to wine64/wine
+	EnableDXVK         bool   `json:"useExperimentalDxvk"` // use DXVK Vulkan backend instead of WineD3D/GDI
+	EnableEsync        bool   `json:"enableEsync"`         // WINEESYNC=1
+	EnableFsync        bool   `json:"enableFsync"`         // WINEFSYNC=1
+	UseMsiQuietMode    bool   `json:"useMsiQuietMode"`     // false = /passive, true = /qn
+	VirtualDesktop     string `json:"virtualDesktop"`      // e.g. "" (off) or "1920x1080"
+	InstalledVersion   string `json:"installedVersion"`    // cached installed version
+	LastSetupCompleted bool   `json:"lastSetupCompleted"`  // true once walkthrough finishes
 }
 
 type Manager struct {
@@ -90,7 +90,7 @@ func NewManager() (*Manager, error) {
 		LogsDir:    filepath.Join(dataBase, "logs"),
 		Settings: Settings{
 			RunnerMode:      "proton-ge",
-			EnableDXVK:      true,
+			EnableDXVK:      false,
 			EnableEsync:     true,
 			EnableFsync:     true,
 			UseMsiQuietMode: false,

@@ -39,6 +39,10 @@ func TestBuildEnvIncludesProtonAndDXVK(t *testing.T) {
 		t.Fatalf("NewManager failed: %v", err)
 	}
 
+	_ = cfg.UpdateSettings(func(s *config.Settings) {
+		s.EnableDXVK = true
+	})
+
 	runner := &proton.Runner{
 		Name:       "GE-Proton10-32",
 		Type:       "proton-ge",

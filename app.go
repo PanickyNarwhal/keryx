@@ -293,15 +293,21 @@ func (a *App) RunFullSetup(ctx context.Context) error {
 
 // Launch starts Faithlife Proclaim in the background (used by the GUI).
 func (a *App) Launch(extraArgs ...string) error {
-	_, err := proton.LaunchProclaim(a.cfg, extraArgs, a.Logf)
-	return err
+	cmd, err := proton.LaunchProclaim(a.cfg, extraArgs, a.Logf)
+	if err != nil {
+		return err
+	}
+	go func() {
+		_ = proton.WaitForProclaim(a.cfg, cmd, a.Logf)
+	}()
+	return nil
 }
 
-// LaunchAndWait starts Faithlife Proclaim and waits for the process to exit (used by `keryx launch`).
+// LaunchAndWait starts Faithlife Proclaim and waits for the Wine session to exit (used by `keryx launch`).
 func (a *App) LaunchAndWait(extraArgs ...string) error {
 	cmd, err := proton.LaunchProclaim(a.cfg, extraArgs, a.Logf)
 	if err != nil {
 		return err
 	}
-	return cmd.Wait()
+	return proton.WaitForProclaim(a.cfg, cmd, a.Logf)
 }

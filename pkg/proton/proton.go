@@ -2,7 +2,6 @@ package proton
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -216,7 +215,7 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 
 	envMap["WINEPREFIX"] = cfg.PrefixDir
 	envMap["WINEARCH"] = "win64"
-	envMap["WINEDEBUG"] = "fixme-all,err+all"
+	envMap["WINEDEBUG"] = "err+all"
 
 	if runner != nil {
 		envMap["WINE"] = runner.Wine64Path
@@ -226,8 +225,8 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 		}
 	}
 
-	// Force native Windows ICU DLLs (from FaithLife-Community/icu) and disable Wine-Mono / winemenubuilder
-	dllOverrides := "icu,icuin,icuuc=n,b;winemenubuilder.exe=d;mscoree="
+	// Disable winemenubuilder and Wine-Mono prompt (Proclaim bundles self-contained .NET 10)
+	dllOverrides := "winemenubuilder.exe=d;mscoree="
 	if settings.EnableDXVK && runner != nil && (runner.Type == "proton-ge" || runner.Type == "steam-proton") {
 		dllOverrides = "d3d11,dxgi,d3d9,d3d10core=n,b;" + dllOverrides
 	}
@@ -276,7 +275,7 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 }
 
 // ProvisionPrefix initializes the 64-bit Wine prefix, configures Windows 10 Build 19045,
-// installs Windows ICU globalization files (required by HASICUDLL & .NET 10), installs core fonts, and sets up DXVK.
+// installs Windows ICU globalization files (required by HASICUDLL & .NET 10), installs core fonts, and configures Direct3D.
 func ProvisionPrefix(ctx context.Context, cfg *config.Manager, runner *Runner, logf func(string, ...any)) error {
 	if runtime.GOOS == "windows" {
 		if logf != nil {
@@ -317,13 +316,8 @@ func ProvisionPrefix(ctx context.Context, cfg *config.Manager, runner *Runner, l
 		return fmt.Errorf("failed to provision ICU files: %w", err)
 	}
 
-	// 4. Configure DXVK for Direct3D 11 hardware acceleration if enabled
-	if cfg.GetSettings().EnableDXVK && (runner.Type == "proton-ge" || runner.Type == "steam-proton") {
-		if logf != nil {
-			logf("Configuring Proton-GE DXVK (Direct3D 11 over Vulkan) for Proclaim...")
-		}
-		configureDXVK(cfg, runner, logf)
-	}
+	// 4. Configure Direct3D DLLs (WineD3D default vs DXVK)
+	configureDirect3D(cfg, runner, logf)
 
 	return nil
 }
@@ -338,7 +332,6 @@ func ensureCoreFonts(cfg *config.Manager, logf func(string, ...any)) {
 		return
 	}
 
-	// Search common Kubuntu/Ubuntu/Linux system fonts for Arial or a metric-compatible Sans-Serif TrueType font
 	candidates := []string{
 		"/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
 		"/usr/share/fonts/truetype/msttcorefonts/arial.ttf",
@@ -375,6 +368,16 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 `, settings.VirtualDesktop)
 	}
 
+	// Set renderer=gdi when DXVK is off (prevents WPF wpfgfx_cor3.dll + LogosCEF.exe crash on D3D9 surface sharing)
+	d3dBlock := `[HKEY_CURRENT_USER\Software\Wine\Direct3D]
+"renderer"="gdi"
+`
+	if settings.EnableDXVK {
+		d3dBlock = `[HKEY_CURRENT_USER\Software\Wine\Direct3D]
+"renderer"=-
+`
+	}
+
 	regContent := fmt.Sprintf(`Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion]
@@ -395,9 +398,6 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 
 [HKEY_CURRENT_USER\Software\Wine\DllOverrides]
 "winemenubuilder.exe"=""
-"icu"="native,builtin"
-"icuin"="native,builtin"
-"icuuc"="native,builtin"
 
 [HKEY_CURRENT_USER\Software\Proclaim]
 "SuppressStartOnInstall"=dword:00000000
@@ -408,7 +408,8 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 "FontSmoothingGamma"=dword:00000578
 "FontSmoothingOrientation"=dword:00000001
 
-%s`, desktopBlock)
+%s
+%s`, d3dBlock, desktopBlock)
 
 	regPath := filepath.Join(cfg.CacheDir, "keryx-win10.reg")
 	if err := os.WriteFile(regPath, []byte(regContent), 0644); err != nil {
@@ -424,22 +425,24 @@ func ensureICUFiles(ctx context.Context, cfg *config.Manager, runner *Runner, lo
 	globLower := filepath.Join(winDir, "globalization", "ICU")
 	globUpper := filepath.Join(winDir, "Globalization", "ICU")
 
-	// Check if both system32/icu.dll and globalization/ICU/icudtl.dat are already installed
+	icuTarPath := filepath.Join(cfg.CacheDir, "icu-win.tar.gz")
+	if _, err := os.Stat(icuTarPath); err != nil {
+		if logf != nil {
+			logf("Downloading FaithLife-Community Windows ICU package (%s)...", config.ICUWinFallbackURL)
+		}
+		if err := installer.DownloadFile(ctx, config.ICUWinFallbackURL, icuTarPath, nil); err != nil {
+			return fmt.Errorf("failed to download icu-win.tar.gz: %w", err)
+		}
+	}
+
+	// Check if globalization/ICU/icudtl.dat AND genuine icuuc.dll (>1MB) are already in place
 	if st1, err1 := os.Stat(filepath.Join(globLower, "icudtl.dat")); err1 == nil && st1.Size() > 100000 {
-		if st2, err2 := os.Stat(filepath.Join(sys32, "icu.dll")); err2 == nil && st2.Size() > 50000 {
+		if st2, err2 := os.Stat(filepath.Join(sys32, "icuuc.dll")); err2 == nil && st2.Size() > 1000000 {
 			return nil
 		}
 	}
 
-	icuTarPath := filepath.Join(cfg.CacheDir, "icu-win.tar.gz")
-	if logf != nil {
-		logf("Downloading FaithLife-Community Windows ICU package (%s)...", config.ICUWinFallbackURL)
-	}
-	if err := installer.DownloadFile(ctx, config.ICUWinFallbackURL, icuTarPath, nil); err != nil {
-		return fmt.Errorf("failed to download icu-win.tar.gz: %w", err)
-	}
-
-	// Extract icu-win.tar.gz directly into drive_c (populates drive_c/windows/system32 and drive_c/windows/globalization/ICU)
+	// Extract icu-win.tar.gz directly into drive_c (replaces Wine stub icu*.dll in system32 & syswow64 and adds globalization/ICU)
 	if err := extractTarGz(icuTarPath, driveC); err != nil {
 		return fmt.Errorf("failed to extract icu-win.tar.gz: %w", err)
 	}
@@ -464,26 +467,40 @@ func ensureICUFiles(ctx context.Context, cfg *config.Manager, runner *Runner, lo
 	return nil
 }
 
-func configureDXVK(cfg *config.Manager, runner *Runner, logf func(string, ...any)) {
-	filesDir := filepath.Dir(filepath.Dir(runner.Wine64Path))
-	candidates := []string{
-		filepath.Join(filesDir, "lib64", "wine", "dxvk", "x86_64-windows"),
-		filepath.Join(filesDir, "lib64", "wine", "dxvk"),
+func configureDirect3D(cfg *config.Manager, runner *Runner, logf func(string, ...any)) {
+	if runner == nil || (runner.Type != "proton-ge" && runner.Type != "steam-proton") {
+		return
 	}
+	filesDir := filepath.Dir(filepath.Dir(runner.Wine64Path))
 	sys32 := filepath.Join(cfg.PrefixDir, "drive_c", "windows", "system32")
-	for _, dir := range candidates {
-		d3d11 := filepath.Join(dir, "d3d11.dll")
-		if _, err := os.Stat(d3d11); err == nil {
-			for _, dll := range []string{"d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll"} {
-				src := filepath.Join(dir, dll)
-				if _, err := os.Stat(src); err == nil {
-					_ = copyFile(src, filepath.Join(sys32, dll), 0755)
+
+	if cfg.GetSettings().EnableDXVK {
+		candidates := []string{
+			filepath.Join(filesDir, "lib64", "wine", "dxvk", "x86_64-windows"),
+			filepath.Join(filesDir, "lib64", "wine", "dxvk"),
+		}
+		for _, dir := range candidates {
+			if _, err := os.Stat(filepath.Join(dir, "d3d11.dll")); err == nil {
+				for _, dll := range []string{"d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll"} {
+					src := filepath.Join(dir, dll)
+					if _, err := os.Stat(src); err == nil {
+						_ = copyFile(src, filepath.Join(sys32, dll), 0755)
+					}
 				}
+				if logf != nil {
+					logf("Configured DXVK Direct3D DLLs from %s", dir)
+				}
+				return
 			}
-			if logf != nil {
-				logf("Installed DXVK Direct3D 11 DLLs from %s", dir)
+		}
+	} else {
+		// Restore Proton's standard WineD3D DLLs in case DXVK DLLs were previously copied into system32
+		wineWinDir := filepath.Join(filesDir, "lib64", "wine", "x86_64-windows")
+		for _, dll := range []string{"d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll"} {
+			src := filepath.Join(wineWinDir, dll)
+			if _, err := os.Stat(src); err == nil {
+				_ = copyFile(src, filepath.Join(sys32, dll), 0755)
 			}
-			return
 		}
 	}
 }
@@ -504,7 +521,6 @@ func InstallProclaimMSI(ctx context.Context, cfg *config.Manager, runner *Runner
 	}
 	err := runWineCmd(ctx, cfg, runner, logf, "msiexec", "/i", msiPath, "REBOOT=ReallySuppress", uiFlag)
 	if err != nil {
-		// Check if Proclaim.exe was installed despite non-zero exit code (e.g. 3010 reboot required)
 		if exePath := FindProclaimExe(cfg); exePath != "" {
 			if logf != nil {
 				logf("msiexec exited with %v, but Proclaim.exe is present at %s", err, exePath)
@@ -565,7 +581,10 @@ func IsProclaimRunning() bool {
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
-// LaunchProclaim launches Proclaim.exe inside the configured Proton-GE prefix, optionally passing an OAuth URI or args.
+// LaunchProclaim launches Proclaim.exe inside the configured Proton-GE prefix.
+// IMPORTANT: Uses a real on-disk log file for stdout/stderr rather than an io.Pipe so that when the
+// stub launcher (AppData\Local\Proclaim\Proclaim.exe) spawns System\Proclaim.exe and exits,
+// the child process never receives SIGPIPE!
 func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, ...any)) (*exec.Cmd, error) {
 	runner := GetActiveRunner(cfg)
 	if runner == nil {
@@ -576,10 +595,12 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 		return nil, fmt.Errorf("Proclaim.exe not found in prefix %s; please install Proclaim first", cfg.PrefixDir)
 	}
 
-	// Self-heal ICU data files & core fonts before launching if missing
+	// Self-heal ICU data files, core fonts, Direct3D DLLs, and registry before launching
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	ensureCoreFonts(cfg, logf)
+	configureDirect3D(cfg, runner, logf)
+	_ = applyPrefixRegistry(ctx, cfg, runner, nil)
 	if err := ensureICUFiles(ctx, cfg, runner, logf); err != nil && logf != nil {
 		logf("Warning: ICU verification before launch returned: %v", err)
 	}
@@ -594,44 +615,118 @@ func LaunchProclaim(cfg *config.Manager, extraArgs []string, logf func(string, .
 	cmd.Env = BuildEnv(cfg, runner)
 
 	logFilePath := filepath.Join(cfg.LogsDir, "proclaim-runtime.log")
-	lf, lfErr := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
+	lf, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err == nil {
+		cmd.Stdout = lf
+		cmd.Stderr = lf
+	}
 
 	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
 		if lf != nil {
 			_ = lf.Close()
 		}
 		return nil, err
 	}
+	if lf != nil {
+		// Parent can close its duplicate fd immediately; child and grandchild processes keep their open fd to disk
+		_ = lf.Close()
+	}
 
-	// Close write end when process exits and stream runtime output to logf + proclaim-runtime.log
+	return cmd, nil
+}
+
+// WaitForProclaim waits for both the initial Proclaim.exe stub and the wineserver session (System\Proclaim.exe),
+// streaming proclaim-runtime.log and dumping any ProclaimError.log / ProclaimCrash.txt if it exits.
+func WaitForProclaim(cfg *config.Manager, cmd *exec.Cmd, logf func(string, ...any)) error {
+	logFilePath := filepath.Join(cfg.LogsDir, "proclaim-runtime.log")
+	stopTail := make(chan struct{})
+
 	go func() {
-		_ = cmd.Wait()
-		_ = pw.Close()
-	}()
-	go func() {
-		defer func() {
-			if lfErr == nil && lf != nil {
-				_ = lf.Close()
-			}
-		}()
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if lfErr == nil && lf != nil {
-				_, _ = fmt.Fprintln(lf, line)
-			}
-			if logf != nil && strings.TrimSpace(line) != "" {
-				logf("[Proclaim] %s", line)
+		var offset int64
+		for {
+			select {
+			case <-stopTail:
+				return
+			case <-time.After(350 * time.Millisecond):
+				if f, err := os.Open(logFilePath); err == nil {
+					if st, err := f.Stat(); err == nil && st.Size() > offset {
+						_, _ = f.Seek(offset, io.SeekStart)
+						buf, _ := io.ReadAll(f)
+						offset += int64(len(buf))
+						for _, line := range strings.Split(string(buf), "\n") {
+							if trimmed := strings.TrimSpace(line); trimmed != "" && logf != nil {
+								logf("[Wine] %s", trimmed)
+							}
+						}
+					}
+					_ = f.Close()
+				}
 			}
 		}
 	}()
 
-	return cmd, nil
+	_ = cmd.Wait()
+
+	// Remember: AppData\Local\Proclaim\Proclaim.exe is a stub that spawns System\Proclaim.exe and exits!
+	// So we wait on wineserver -w so we stay attached while System\Proclaim.exe is running.
+	runner := GetActiveRunner(cfg)
+	if runner != nil && runner.WineServer != "" {
+		wsCmd := exec.Command(runner.WineServer, "-w")
+		wsCmd.Env = BuildEnv(cfg, runner)
+		_ = wsCmd.Run()
+	}
+
+	time.Sleep(400 * time.Millisecond)
+	close(stopTail)
+
+	DumpProclaimLogs(cfg, logf)
+	return nil
+}
+
+// DumpProclaimLogs searches the prefix for Proclaim's own error/crash logs and prints them to logf.
+func DumpProclaimLogs(cfg *config.Manager, logf func(string, ...any)) {
+	if logf == nil {
+		return
+	}
+	usersDir := filepath.Join(cfg.PrefixDir, "drive_c", "users")
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "Public" {
+			continue
+		}
+		logDirs := []string{
+			filepath.Join(usersDir, e.Name(), "Documents", "Proclaim Log Files"),
+			filepath.Join(usersDir, e.Name(), "AppData", "Local", "Faithlife", "Logs", "Proclaim"),
+		}
+		for _, dir := range logDirs {
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				fullPath := filepath.Join(dir, f.Name())
+				data, err := os.ReadFile(fullPath)
+				if err != nil || len(data) == 0 {
+					continue
+				}
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				start := 0
+				if len(lines) > 35 {
+					start = len(lines) - 35
+				}
+				logf("--- %s (last %d lines) ---", f.Name(), len(lines)-start)
+				for _, l := range lines[start:] {
+					logf("  %s", strings.TrimRight(l, "\r"))
+				}
+			}
+		}
+	}
 }
 
 // RunWineTool launches a Wine utility such as winecfg, regedit, or wineserver -k.
@@ -705,7 +800,9 @@ func extractTarGz(tarGzPath, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
 			}
-			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			// Remove existing file/symlink first so we never follow a symlink into read-only runner dirs
+			_ = os.Remove(target)
+			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)|0644)
 			if err != nil {
 				return err
 			}
@@ -742,6 +839,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
+	_ = os.Remove(dst)
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
