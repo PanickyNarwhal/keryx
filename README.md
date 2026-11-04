@@ -4,17 +4,50 @@
 > (**κήρυξον** τὸν λόγον — from **κῆρυξ**, *herald / proclaimer*)
 > — 2 Timothy 4:2 [CSB](https://www.biblegateway.com/passage/?search=2+Timothy+4%3A2&version=CSB)
 
-**Keryx** is a standalone Linux installer and manager for **Faithlife Proclaim** church presentation software, built on [Matheteusate](https://github.com/panickynarwhal/Matheteusate) and [Ou Dedetai](https://github.com/FaithLife-Community/OuDedetai), maintained by Isaac Gerling and licensed under the MIT License.
+**Keryx** is a zero-dependency **Go** launcher and guided installer that runs **Faithlife Proclaim** church presentation software on Linux almost natively via **Proton-GE** (or Wine).
 
-## What this is
-Keryx is a Python application to install, update, and run **Faithlife Proclaim** on Linux (and in the future BSD) through the **Proton-GE** compatibility layer.
+No Python, `pip`, `venv`, or `winetricks` required—just a single self-contained binary with a built-in Desktop Launcher UI and step-by-step Setup Walkthrough.
 
-## Why Keryx + Proton-GE Works for Proclaim
-* **Direct 64-bit MSI Installation**: Bypasses the legacy `ProclaimSetup.exe` web bootstrapper (which requires Windows `TrustedInstaller` elevation and fails in Wine) and fetches `Proclaim-x64.msi` directly from Faithlife's `proclaim` release feed.
-* **Self-Contained .NET 10 + ICU**: Automatically provisions Windows `icu` globalization data (`icu.dll` / `icudtl.dat`) required by `Proclaim-x64.msi`'s `HASICUDLL` launch check, running Proclaim's bundled self-contained `.NET 10` and `LogosCEF` runtime without needing `winetricks dotnet48` or Wine-Mono.
-* **Direct3D 11 & Media Foundation via Proton-GE**: Proclaim relies on `SharpDX.Direct3D11`, `Vortice.Direct3D11`, `Vortice.MediaFoundation`, and `EVRPresenter.dll` for hardware-accelerated slide transitions, motion backgrounds, and video playback. Proton-GE provides built-in **DXVK** (Direct3D 9/11 over Vulkan) and patched **Media Foundation (`mfplat`) / GStreamer** support out of the box.
-* **OAuth Browser Sign-In**: Registers the `proclaim:` (`x-scheme-handler/proclaim`) desktop URI handler so signing into Faithlife in your Linux browser redirects straight back into Proclaim.
-* **Standalone Operation**: Manages the GE-Proton runtime automatically in `data/bin` and `data/pfx`—no Steam installation required.
+---
+
+## How It Works
+
+1. **Direct Official Installer Resolution**:
+   - Scrapes [`https://proclaim.logos.com/download-confirmation?platform=win`](https://proclaim.logos.com/download-confirmation?platform=win) to locate the official Windows bootstrapper (`ProclaimSetup.exe`).
+   - Inspects the UTF-16LE `ProclaimWebScript.lbxdat` manifest inside `ProclaimSetup.exe` to resolve the exact 64-bit `Proclaim-x64.msi` URL and version, bypassing Windows `BITS` and `TrustedInstaller` elevation issues under Wine.
+2. **Automated Proton-GE Compatibility Engine**:
+   - Automatically detects existing Proton-GE / Steam Proton installations (`~/.steam/root/compatibilitytools.d`) or downloads and extracts the latest `GE-Proton` release into `~/.local/share/keryx/runners`.
+3. **Windows 10 (Build 19045) + ICU 73.2 + DXVK**:
+   - Initializes a dedicated 64-bit prefix (`~/.local/share/keryx/prefix/pfx`), sets Windows 10 Build 19045, provisions `icu.dll` / `icudtl.dat` into `system32` (satisfying Proclaim's `HASICUDLL` check and `.NET 10` globalization), and enables **DXVK** (Direct3D 11 over Vulkan) + GStreamer Media Foundation for smooth slide transitions and video playback.
+4. **Seamless Native Desktop & OAuth Integration**:
+   - Creates `Faithlife-Proclaim.desktop` (`keryx launch %u`) and `Keryx.desktop` in `~/.local/share/applications`.
+   - Registers the `proclaim://` (`x-scheme-handler/proclaim`) OAuth URI handler so signing into Faithlife in your Linux browser redirects straight back into Proclaim.
+
+---
+
+## Getting Started
+
+### Build from Source (Go 1.22+)
+```bash
+git clone https://github.com/PanickyNarwhal/keryx.git
+cd keryx
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o keryx .
+```
+
+### Usage
+```bash
+# Open the Keryx Desktop Launcher & Guided 5-Step Setup Walkthrough UI
+./keryx
+
+# Launch Faithlife Proclaim directly (also used by the desktop shortcut & proclaim:// OAuth links)
+./keryx launch
+
+# Run the guided 5-step setup walkthrough in the terminal
+./keryx setup
+
+# Check Proclaim release status, installed version, and Proton-GE runner diagnostics
+./keryx status
+```
 
 ---
 In excelsis Deo

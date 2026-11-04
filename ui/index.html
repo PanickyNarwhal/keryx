@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Keryx — Faithlife Proclaim Launcher for Linux</title>
+  <style>
+    :root {
+      --bg-base: #0d1017;
+      --bg-surface: #151a24;
+      --bg-elevated: #1c2331;
+      --bg-hover: #242d3f;
+      --border: #283246;
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #38bdf8;
+      --accent-strong: #0284c7;
+      --accent-glow: rgba(56, 189, 248, 0.16);
+      --success: #22c55e;
+      --success-bg: rgba(34, 197, 94, 0.14);
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Top Header */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand img {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-glow);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    .badge.success {
+      background: var(--success-bg);
+      color: var(--success);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 6px;
+      background: var(--bg-base);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .nav-tab {
+      background: transparent;
+      color: var(--text-secondary);
+      border: none;
+      padding: 8px 16px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .nav-tab:hover {
+      color: var(--text-primary);
+    }
+
+    .nav-tab.active {
+      background: var(--bg-elevated);
+      color: var(--accent);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    /* Main Content Area */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 22px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .view {
+      display: none;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .view.active {
+      display: flex;
+    }
+
+    /* Hero Card */
+    .hero-card {
+      background: linear-gradient(135deg, #172030 0%, #131824 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .hero-left {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .hero-icon {
+      width: 68px;
+      height: 68px;
+      border-radius: 14px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+    }
+
+    .hero-info h1 {
+      font-size: 21px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 20px;
+      border-radius: 9px;
+      font-size: 14px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(180deg, #38bdf8 0%, #0284c7 100%);
+      color: #06131f;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
+
+    .btn-success {
+      background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+      color: #051b0d;
+      box-shadow: 0 4px 14px rgba(22, 163, 74, 0.35);
+    }
+
+    .btn-success:hover:not(:disabled) {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border-color: var(--border);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--bg-hover);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.12);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.22);
+    }
+
+    /* Grid & Cards */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-desc {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    /* Setup Wizard Step List */
+    .steps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .step-item {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.2s ease;
+    }
+
+    .step-item.running {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.04);
+    }
+
+    .step-item.done {
+      border-color: rgba(34, 197, 94, 0.4);
+    }
+
+    .step-item.error {
+      border-color: var(--danger);
+      background: rgba(239, 68, 68, 0.05);
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .step-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .step-num {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+
+    .step-item.running .step-num {
+      background: var(--accent);
+      color: #06131f;
+      border-color: var(--accent);
+    }
+
+    .step-item.done .step-num {
+      background: var(--success);
+      color: #051b0d;
+      border-color: var(--success);
+    }
+
+    .step-item.error .step-num {
+      background: var(--danger);
+      color: #fff;
+      border-color: var(--danger);
+    }
+
+    .step-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .step-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .step-detail {
+      font-size: 12px;
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-base);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #38bdf8, #22c55e);
+      width: 0%;
+      transition: width 0.2s ease;
+    }
+
+    /* Form Controls */
+    .field-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(40, 50, 70, 0.5);
+    }
+
+    .field-row:last-child {
+      border-bottom: none;
+    }
+
+    .field-label {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .field-sub {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+    }
+
+    select, input[type="text"] {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 7px 11px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    select:focus, input[type="text"]:focus {
+      border-color: var(--accent);
+    }
+
+    .input-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .input-group input {
+      flex: 1;
+    }
+
+    .tool-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tool-buttons .btn {
+      padding: 8px 13px;
+      font-size: 12.5px;
+    }
+
+    /* Console Footer */
+    .log-box {
+      background: #090c11;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 10px 12px;
+      height: 135px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.5px;
+      color: #a5b4fc;
+      line-height: 1.5;
+      user-select: text;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="/api/icon.png" alt="Proclaim Icon" />
+      <div>
+        <div class="brand-title">
+          Keryx
+          <span class="badge" id="header-status-badge">Checking...</span>
+        </div>
+        <div class="brand-subtitle">Faithlife Proclaim Launcher &amp; Proton-GE Manager for Linux</div>
+      </div>
+    </div>
+
+    <div class="nav-tabs">
+      <button class="nav-tab" id="tab-launcher" onclick="switchTab('launcher')">Launcher Dashboard</button>
+      <button class="nav-tab" id="tab-wizard" onclick="switchTab('wizard')">Setup Walkthrough</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- VIEW 1: LAUNCHER DASHBOARD -->
+    <div class="view" id="view-launcher">
+      <div class="hero-card">
+        <div class="hero-left">
+          <img class="hero-icon" src="/api/icon.png" alt="Faithlife Proclaim" />
+          <div class="hero-info">
+            <h1>Faithlife Proclaim</h1>
+            <div class="brand-subtitle" id="launcher-subtitle">Ready to launch via Proton-GE</div>
+            <div class="hero-meta">
+              <span id="meta-installed-ver">Version: Not Installed</span>
+              <span>•</span>
+              <span id="meta-runner">Runner: Auto (Proton-GE)</span>
+              <span>•</span>
+              <span id="meta-dxvk">Graphics: DXVK (Vulkan D3D11)</span>
+            </div>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn btn-secondary" id="btn-update" style="display:none;" onclick="startSetup()">Update Proclaim</button>
+          <button class="btn btn-success" id="btn-launch" onclick="launchProclaim()">▶ Launch Proclaim</button>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- OAuth Sign-In Helper -->
+        <div class="card">
+          <div class="card-title">
+            <span>Faithlife OAuth Sign-In Relay</span>
+            <span class="badge">proclaim://</span>
+          </div>
+          <div class="card-desc">
+            Signing in through your Linux browser automatically redirects back to Proclaim. If your browser is sandboxed (Flatpak/Snap) and doesn't open the link automatically, paste the <code>proclaim://</code> callback URL below:
+          </div>
+          <div class="input-group">
+            <input type="text" id="oauth-url-input" placeholder="proclaim://signin?..." />
+            <button class="btn btn-secondary" onclick="sendOAuthURL()">Send to Proclaim</button>
+          </div>
+        </div>
+
+        <!-- Prefix & Wine Utilities -->
+        <div class="card">
+          <div class="card-title">
+            <span>Proton-GE &amp; Prefix Controls</span>
+            <span class="badge" id="desktop-shortcut-badge">Desktop Integrated</span>
+          </div>
+          <div class="card-desc">
+            Manage the underlying 64-bit Windows 10 prefix, configure audio/displays, or restart the Wine server.
+          </div>
+          <div class="tool-buttons">
+            <button class="btn btn-secondary" onclick="runTool('winecfg')">Wine Config (winecfg)</button>
+            <button class="btn btn-secondary" onclick="runTool('regedit')">Registry (regedit)</button>
+            <button class="btn btn-secondary" onclick="repairPrefix()">Repair ICU &amp; Prefix</button>
+            <button class="btn btn-danger" onclick="runTool('kill')">Stop Wine Server</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Display & Compatibility Settings -->
+      <div class="card">
+        <div class="card-title">Presentation &amp; Compatibility Settings</div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">DXVK Vulkan Acceleration (Direct3D 11)</div>
+            <div class="field-sub">Hardware-accelerated slide transitions, motion backgrounds, and media playback</div>
+          </div>
+          <input type="checkbox" id="chk-dxvk" onchange="saveSettings()" style="width:18px;height:18px;cursor:pointer;" />
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">ESYNC / FSYNC High-Performance Synchronization</div>
+            <div class="field-sub">Lowers CPU overhead for multi-threaded .NET 10 and CEF rendering</div>
+          </div>
+          <input type="checkbox" id="chk-esync" onchange="saveSettings()" style="width:18px;height:18px;cursor:pointer;" />
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">Virtual Desktop Mode (Projector / Multi-Monitor Troubleshooting)</div>
+            <div class="field-sub">Keep "Off" for native seamless windows, or choose a resolution to confine full-screen output</div>
+          </div>
+          <select id="sel-vdesktop" onchange="saveSettings()">
+            <option value="">Off (Seamless Native Windows)</option>
+            <option value="1920x1080">1920x1080 (1080p Stage)</option>
+            <option value="2560x1440">2560x1440 (1440p Stage)</option>
+            <option value="1280x720">1280x720 (720p Stage)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: SETUP WALKTHROUGH WIZARD -->
+    <div class="view" id="view-wizard">
+      <div class="hero-card">
+        <div class="hero-left">
+          <img class="hero-icon" src="/api/icon.png" alt="Setup Wizard" />
+          <div class="hero-info">
+            <h1>Guided Proclaim Setup &amp; Installer</h1>
+            <div class="brand-subtitle" id="wizard-source-url">
+              Source: https://proclaim.logos.com/download-confirmation?platform=win
+            </div>
+            <div class="hero-meta">
+              <span id="wizard-latest-ver">Latest Release: Checking...</span>
+              <span>•</span>
+              <span>Runtime: Proton-GE (64-bit Win10 + ICU 73.2)</span>
+            </div>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="btn-start-setup" onclick="startSetup()">
+            ⚡ Start Guided Setup &amp; Install
+          </button>
+        </div>
+      </div>
+
+      <div class="steps-list" id="steps-container"></div>
+    </div>
+
+    <!-- Live Console Logs -->
+    <div class="card" style="padding: 12px 16px;">
+      <div class="card-title" style="font-size: 12px; color: var(--text-secondary);">
+        <span>Live Activity &amp; Installer Log</span>
+        <span id="speed-indicator" style="color: var(--accent);"></span>
+      </div>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </main>
+
+  <script>
+    let currentTab = '';
+    let userSwitchedTab = false;
+
+    function switchTab(tab) {
+      userSwitchedTab = true;
+      setActiveTab(tab);
+    }
+
+    function setActiveTab(tab) {
+      currentTab = tab;
+      document.getElementById('tab-launcher').classList.toggle('active', tab === 'launcher');
+      document.getElementById('tab-wizard').classList.toggle('active', tab === 'wizard');
+      document.getElementById('view-launcher').classList.toggle('active', tab === 'launcher');
+      document.getElementById('view-wizard').classList.toggle('active', tab === 'wizard');
+    }
+
+    async function fetchState() {
+      try {
+        const res = await fetch('/api/state');
+        const st = await res.json();
+        renderState(st);
+      } catch (e) {}
+    }
+
+    function renderState(st) {
+      if (!userSwitchedTab && !currentTab) {
+        setActiveTab(st.isInstalled && !st.setupInProgress ? 'launcher' : 'wizard');
+      }
+
+      const badge = document.getElementById('header-status-badge');
+      if (st.setupInProgress) {
+        badge.textContent = 'Installing (Step ' + st.currentStep + '/5)';
+        badge.className = 'badge';
+      } else if (st.isRunning) {
+        badge.textContent = 'Proclaim Running';
+        badge.className = 'badge success';
+      } else if (st.isInstalled) {
+        badge.textContent = 'Installed (' + st.installedVersion + ')';
+        badge.className = 'badge success';
+      } else {
+        badge.textContent = 'Setup Required';
+        badge.className = 'badge';
+      }
+
+      document.getElementById('meta-installed-ver').textContent =
+        st.isInstalled ? ('Version: ' + st.installedVersion) : 'Version: Not Installed';
+      document.getElementById('meta-runner').textContent =
+        'Runner: ' + (st.activeRunner ? st.activeRunner.name : 'Proton-GE (Auto-Download)');
+      document.getElementById('meta-dxvk').textContent =
+        'Graphics: ' + (st.settings.enableDxvk ? 'DXVK (Vulkan D3D11)' : 'WineD3D (OpenGL)');
+
+      const btnLaunch = document.getElementById('btn-launch');
+      btnLaunch.disabled = !st.isInstalled || st.setupInProgress;
+      btnLaunch.textContent = st.isRunning ? '▶ Focus / Launch Proclaim' : '▶ Launch Proclaim';
+
+      const btnUpdate = document.getElementById('btn-update');
+      if (st.updateAvailable && st.latestRelease) {
+        btnUpdate.style.display = 'inline-flex';
+        btnUpdate.textContent = '⬆ Update to v' + st.latestRelease.version;
+      } else {
+        btnUpdate.style.display = 'none';
+      }
+
+      if (st.latestRelease && st.latestRelease.version) {
+        document.getElementById('wizard-latest-ver').textContent =
+          'Latest Release: v' + st.latestRelease.version + ' (64-bit MSI)';
+      }
+
+      const btnStartSetup = document.getElementById('btn-start-setup');
+      btnStartSetup.disabled = st.setupInProgress;
+      btnStartSetup.textContent = st.setupInProgress
+        ? 'Installing... Please Wait'
+        : (st.isInstalled ? '↻ Re-Run Setup / Update Proclaim' : '⚡ Start Guided Setup & Install');
+
+      document.getElementById('chk-dxvk').checked = !!st.settings.enableDxvk;
+      document.getElementById('chk-esync').checked = !!st.settings.enableEsync;
+      document.getElementById('sel-vdesktop').value = st.settings.virtualDesktop || '';
+
+      // Render steps
+      const stepsEl = document.getElementById('steps-container');
+      stepsEl.innerHTML = st.steps.map(s => {
+        let icon = s.id;
+        if (s.status === 'done') icon = '✓';
+        if (s.status === 'error') icon = '!';
+        const showBar = s.status === 'running' || s.status === 'done';
+        return `
+          <div class="step-item ${s.status}">
+            <div class="step-header">
+              <div class="step-left">
+                <div class="step-num">${icon}</div>
+                <div>
+                  <div class="step-title">${s.title}</div>
+                  <div class="step-desc">${s.description}</div>
+                </div>
+              </div>
+              <div class="step-detail">${s.detail || s.status.toUpperCase()}</div>
+            </div>
+            ${showBar ? `<div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, Math.max(0, s.percent || 0))}%"></div></div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      const speedEl = document.getElementById('speed-indicator');
+      if (st.setupInProgress && st.downloadMbps > 0) {
+        speedEl.textContent = `${st.downloadPercent.toFixed(1)}% • ${st.downloadMbps.toFixed(1)} MB/s`;
+      } else {
+        speedEl.textContent = '';
+      }
+
+      const logBox = document.getElementById('log-box');
+      const wasAtBottom = logBox.scrollHeight - logBox.clientHeight <= logBox.scrollTop + 25;
+      logBox.textContent = (st.logs || []).join('\n');
+      if (wasAtBottom) {
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+    }
+
+    async function startSetup() {
+      setActiveTab('wizard');
+      await fetch('/api/setup/start', { method: 'POST' });
+      fetchState();
+    }
+
+    async function launchProclaim() {
+      await fetch('/api/launch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      fetchState();
+    }
+
+    async function sendOAuthURL() {
+      const input = document.getElementById('oauth-url-input');
+      const uri = input.value.trim();
+      if (!uri) return;
+      await fetch('/api/launch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uri })
+      });
+      input.value = '';
+    }
+
+    async function runTool(tool) {
+      await fetch('/api/wine-tool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool })
+      });
+    }
+
+    async function repairPrefix() {
+      await fetch('/api/repair', { method: 'POST' });
+    }
+
+    async function saveSettings() {
+      const payload = {
+        enableDxvk: document.getElementById('chk-dxvk').checked,
+        enableEsync: document.getElementById('chk-esync').checked,
+        virtualDesktop: document.getElementById('sel-vdesktop').value
+      };
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      fetchState();
+    }
+
+    fetchState();
+    setInterval(fetchState, 600);
+  </script>
+</body>
+</html>

@@ -1,12 +1,12 @@
-*.pyc
-__pycache__/
+# Binaries and build output
 dist/
-build/
-env/
-.env/
-venv/
-.venv/
-.idea/
-*.egg-info
-.vscode
-/.flatpak-builder
+keryx
+keryx-*
+*.exe
+*.out
+*.test
+
+# Local caches
+*.msi
+*.part
+*.tar.gz
