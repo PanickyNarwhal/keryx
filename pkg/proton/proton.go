@@ -53,18 +53,24 @@ func DiscoverRunners(cfg *config.Manager) []Runner {
 			return
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
+			root := filepath.Join(baseDir, e.Name())
+			if st, err := os.Stat(root); err != nil || !st.IsDir() {
 				continue
 			}
-			root := filepath.Join(baseDir, e.Name())
-			wine64 := filepath.Join(root, "files", "bin", "wine64")
-			if _, err := os.Stat(wine64); err != nil {
-				wine64 = filepath.Join(root, "dist", "bin", "wine64")
-				if _, err2 := os.Stat(wine64); err2 != nil {
-					continue
+			candidates := []string{
+				filepath.Join(root, "files", "bin", "wine64"),
+				filepath.Join(root, "files", "bin", "wine"),
+				filepath.Join(root, "dist", "bin", "wine64"),
+				filepath.Join(root, "dist", "bin", "wine"),
+			}
+			var wine64 string
+			for _, c := range candidates {
+				if _, err := os.Stat(c); err == nil {
+					wine64 = c
+					break
 				}
 			}
-			if seen[wine64] {
+			if wine64 == "" || seen[wine64] {
 				continue
 			}
 			seen[wine64] = true
@@ -81,9 +87,10 @@ func DiscoverRunners(cfg *config.Manager) []Runner {
 	// 1. Keryx managed Proton-GE directory (no Steam required)
 	addProtonDir(cfg.RunnersDir, "proton-ge")
 
-	// 2. User's existing Steam Proton-GE / compatibilitytools.d locations (if any)
+	// 2. User's existing Steam / CachyOS Proton-GE / compatibilitytools.d locations (if any)
 	if home, err := os.UserHomeDir(); err == nil {
 		steamCompatDirs := []string{
+			"/usr/share/steam/compatibilitytools.d",
 			filepath.Join(home, ".steam", "root", "compatibilitytools.d"),
 			filepath.Join(home, ".local", "share", "Steam", "compatibilitytools.d"),
 			filepath.Join(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam", "compatibilitytools.d"),
@@ -271,6 +278,9 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 			filepath.Join(lib64, "wine", "x86_64-windows"),
 			filepath.Join(lib64, "wine", "x86_64-unix"),
 			filepath.Join(lib64, "wine"),
+			filepath.Join(lib32, "wine", "vkd3d-proton", "x86_64-windows"),
+			filepath.Join(lib32, "wine", "x86_64-windows"),
+			filepath.Join(lib32, "wine", "x86_64-unix"),
 			filepath.Join(lib32, "wine", "vkd3d-proton", "i386-windows"),
 			filepath.Join(lib32, "wine", "i386-windows"),
 			filepath.Join(lib32, "wine", "i386-unix"),
@@ -820,6 +830,9 @@ func configureDirect3D(cfg *config.Manager, runner *Runner, logf func(string, ..
 		filepath.Join(filesDir, "lib64", "wine", "vkd3d-proton", "x86_64-windows"),
 		filepath.Join(filesDir, "lib64", "wine", "vkd3d-proton"),
 		filepath.Join(filesDir, "lib64", "wine", "x86_64-windows"),
+		filepath.Join(filesDir, "lib", "wine", "vkd3d-proton", "x86_64-windows"),
+		filepath.Join(filesDir, "lib", "wine", "vkd3d-proton"),
+		filepath.Join(filesDir, "lib", "wine", "x86_64-windows"),
 		filepath.Join(filesDir, "bin"),
 	}
 	for _, vdir := range vkd3dDirs {
@@ -835,6 +848,8 @@ func configureDirect3D(cfg *config.Manager, runner *Runner, logf func(string, ..
 		candidates := []string{
 			filepath.Join(filesDir, "lib64", "wine", "dxvk", "x86_64-windows"),
 			filepath.Join(filesDir, "lib64", "wine", "dxvk"),
+			filepath.Join(filesDir, "lib", "wine", "dxvk", "x86_64-windows"),
+			filepath.Join(filesDir, "lib", "wine", "dxvk"),
 		}
 		for _, dir := range candidates {
 			if _, err := os.Stat(filepath.Join(dir, "d3d11.dll")); err == nil {
@@ -852,11 +867,13 @@ func configureDirect3D(cfg *config.Manager, runner *Runner, logf func(string, ..
 		}
 	} else {
 		// Restore Proton's standard WineD3D DLLs in case DXVK DLLs were previously copied into system32
-		wineWinDir := filepath.Join(filesDir, "lib64", "wine", "x86_64-windows")
-		for _, dll := range []string{"d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll"} {
-			src := filepath.Join(wineWinDir, dll)
-			if _, err := os.Stat(src); err == nil {
-				_ = copyFile(src, filepath.Join(sys32, dll), 0755)
+		for _, libDir := range []string{"lib64", "lib"} {
+			wineWinDir := filepath.Join(filesDir, libDir, "wine", "x86_64-windows")
+			for _, dll := range []string{"d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll"} {
+				src := filepath.Join(wineWinDir, dll)
+				if _, err := os.Stat(src); err == nil {
+					_ = copyFile(src, filepath.Join(sys32, dll), 0755)
+				}
 			}
 		}
 	}
