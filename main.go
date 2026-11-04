@@ -51,7 +51,7 @@ func main() {
 
 		// Direct OAuth URI handling if passed as first arg (e.g. `keryx proclaim://...`)
 		if strings.HasPrefix(cmd, "proclaim:") || strings.HasPrefix(cmd, "libronixdls:") {
-			if err := app.Launch(args[0]); err != nil {
+			if err := app.LaunchAndWait(args[0]); err != nil {
 				log.Fatalf("Failed to launch Proclaim with OAuth URI: %v", err)
 			}
 			return
@@ -65,9 +65,9 @@ func main() {
 					extra = append(extra, a)
 				}
 			}
-			// If Proclaim is already installed, launch it directly and seamlessly!
+			// If Proclaim is already installed, launch it directly and wait!
 			if proton.FindProclaimExe(cfg) != "" {
-				if err := app.Launch(extra...); err != nil {
+				if err := app.LaunchAndWait(extra...); err != nil {
 					log.Fatalf("Failed to launch Faithlife Proclaim: %v", err)
 				}
 				return

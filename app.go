@@ -291,8 +291,17 @@ func (a *App) RunFullSetup(ctx context.Context) error {
 	return nil
 }
 
-// Launch starts Faithlife Proclaim (optionally forwarding a proclaim:// OAuth URI).
+// Launch starts Faithlife Proclaim in the background (used by the GUI).
 func (a *App) Launch(extraArgs ...string) error {
 	_, err := proton.LaunchProclaim(a.cfg, extraArgs, a.Logf)
 	return err
+}
+
+// LaunchAndWait starts Faithlife Proclaim and waits for the process to exit (used by `keryx launch`).
+func (a *App) LaunchAndWait(extraArgs ...string) error {
+	cmd, err := proton.LaunchProclaim(a.cfg, extraArgs, a.Logf)
+	if err != nil {
+		return err
+	}
+	return cmd.Wait()
 }

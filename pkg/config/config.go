@@ -23,7 +23,7 @@ const (
 	ProtonGELatestAPIURL    = "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest"
 	ProtonGEFallbackTag     = "GE-Proton10-32"
 	ProtonGEFallbackURL     = "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton10-32/GE-Proton10-32.tar.gz"
-	ICUWinFallbackURL       = "https://github.com/FaithLife-Community/icu-win/releases/download/73.2/icu-win.tar.gz"
+	ICUWinFallbackURL       = "https://github.com/FaithLife-Community/icu/releases/download/72.1-custom%2B4/icu-win.tar.gz"
 	ProclaimUpgradeCode     = "{500E8D69-8AC5-4226-B110-A4B13B537DD0}"
 )
 
