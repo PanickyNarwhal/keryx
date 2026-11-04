@@ -67,6 +67,9 @@ func TestBuildEnvIncludesProtonAndDXVK(t *testing.T) {
 	if !strings.Contains(envJoined, "icu,icuin,icuuc=n,b") {
 		t.Errorf("expected icu,icuin,icuuc=n,b in WINEDLLOVERRIDES, got:\n%s", envJoined)
 	}
+	if strings.Contains(envJoined, "mscoree=") {
+		t.Errorf("mscoree= must not be present in WINEDLLOVERRIDES (breaks fixup_imports_ilonly for System.Runtime.dll)")
+	}
 }
 
 func TestPromotePendingAndBypassSplashStub(t *testing.T) {

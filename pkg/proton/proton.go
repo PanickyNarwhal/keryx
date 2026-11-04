@@ -226,8 +226,10 @@ func BuildEnv(cfg *config.Manager, runner *Runner) []string {
 		}
 	}
 
-	// Force native Windows ICU DLLs (from icu-win.tar.gz), disable winemenubuilder, and disable Wine-Mono prompt
-	dllOverrides := "icu,icuin,icuuc=n,b;winemenubuilder.exe=d;mscoree="
+	// Force native Windows ICU DLLs (from icu-win.tar.gz) and disable winemenubuilder.
+	// IMPORTANT: Never disable mscoree.dll! Wine's ntdll PE loader (fixup_imports_ilonly) requires
+	// builtin mscoree.dll to map IL-only .NET assemblies such as System.Runtime.dll.
+	dllOverrides := "icu,icuin,icuuc=n,b;winemenubuilder.exe=d"
 	if settings.EnableDXVK && runner != nil && (runner.Type == "proton-ge" || runner.Type == "steam-proton") {
 		dllOverrides = "d3d11,dxgi,d3d9,d3d10core=n,b;" + dllOverrides
 	}
@@ -410,6 +412,7 @@ func applyPrefixRegistry(ctx context.Context, cfg *config.Manager, runner *Runne
 "icuin"="native,builtin"
 "icuuc"="native,builtin"
 "winemenubuilder.exe"=""
+"mscoree"=-
 
 [HKEY_CURRENT_USER\Software\Proclaim]
 "SuppressStartOnInstall"=dword:00000000
