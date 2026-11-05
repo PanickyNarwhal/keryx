@@ -1,12 +1,11 @@
 # Keryx
+This project is now depreciated because Proclaim has a Web app which defeats the whole purpose of this.
 
 > "Preach (**proclaim**) the word; be ready in season and out of season; correct, rebuke, and encourage with great patience and teaching."
 > (**κήρυξον** τὸν λόγον — from **κῆρυξ**, *herald / proclaimer*)
 > — 2 Timothy 4:2 [CSB](https://www.biblegateway.com/passage/?search=2+Timothy+4%3A2&version=CSB)
 
 **Keryx** is a zero-dependency **Go** launcher and guided installer that runs **Faithlife Proclaim** church presentation software on Linux almost natively via **Proton-GE** (or Wine).
-
-No Python, `pip`, `venv`, or `winetricks` required—just a single self-contained binary with a built-in Desktop Launcher UI and step-by-step Setup Walkthrough.
 
 ---
 
